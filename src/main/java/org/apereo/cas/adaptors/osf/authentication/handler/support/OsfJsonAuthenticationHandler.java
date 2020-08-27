@@ -1,4 +1,4 @@
-package org.apereo.cas.adaptors.generic;
+package org.apereo.cas.adaptors.osf.authentication.handler.support;
 
 import org.apereo.cas.DefaultMessageDescriptor;
 import org.apereo.cas.adaptors.osf.authentication.credential.OsfCredential;
@@ -11,6 +11,7 @@ import org.apereo.cas.authentication.exceptions.AccountDisabledException;
 import org.apereo.cas.authentication.exceptions.AccountPasswordMustChangeException;
 import org.apereo.cas.authentication.handler.PrincipalNameTransformer;
 import org.apereo.cas.authentication.handler.support.AbstractUsernamePasswordAuthenticationHandler;
+import org.apereo.cas.authentication.principal.Principal;
 import org.apereo.cas.authentication.principal.PrincipalFactory;
 import org.apereo.cas.services.ServicesManager;
 import org.apereo.cas.util.transforms.NoOpPrincipalNameTransformer;
@@ -22,7 +23,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
-import lombok.val;
 
 import org.apache.commons.beanutils.BeanUtils;
 import org.apache.commons.lang3.BooleanUtils;
@@ -40,23 +40,24 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
- * This is {@link JsonResourceAuthenticationHandler}.
+ * This is {@link OsfJsonAuthenticationHandler}.
  *
- * @author Misagh Moayyed
  * @author Longze Chen
- * @since 5.3.0
+ * @since 6.2.1
  */
 @Slf4j
-public class JsonResourceAuthenticationHandler extends AbstractUsernamePasswordAuthenticationHandler {
+public class OsfJsonAuthenticationHandler extends AbstractUsernamePasswordAuthenticationHandler {
 
     private final ObjectMapper mapper;
     private final Resource resource;
     private final PrincipalNameTransformer principalNameTransformer;
 
-    public JsonResourceAuthenticationHandler(
+    @SuppressWarnings("deprecation")
+    public OsfJsonAuthenticationHandler(
             final String name,
             final ServicesManager servicesManager,
             final PrincipalFactory principalFactory,
@@ -79,9 +80,9 @@ public class JsonResourceAuthenticationHandler extends AbstractUsernamePasswordA
     protected AuthenticationHandlerExecutionResult doAuthentication(final Credential credential) {
 
         LOGGER.debug("The credential class is [{}]", credential.getClass().getSimpleName());
-        val originalCredential = (OsfCredential) credential;
+        OsfCredential originalCredential = (OsfCredential) credential;
         LOGGER.debug("The credential class has been casted to [{}]", OsfCredential.class.getSimpleName());
-        val osfCredential = (OsfCredential) credential.getClass().getDeclaredConstructor().newInstance();
+        OsfCredential osfCredential = (OsfCredential) credential.getClass().getDeclaredConstructor().newInstance();
         BeanUtils.copyProperties(osfCredential, originalCredential);
         LOGGER.debug("A new credential has been created with copied properties");
 
@@ -100,7 +101,7 @@ public class JsonResourceAuthenticationHandler extends AbstractUsernamePasswordA
                     "Transforming credential verification key via [{}]",
                     this.principalNameTransformer.getClass().getName()
             );
-            val transformedVerificationKey
+            String transformedVerificationKey
                     = this.principalNameTransformer.transform(osfCredential.getVerificationKey());
             if (StringUtils.isBlank(transformedVerificationKey)) {
                 throw new AccountNotFoundException("Transformed verification key null.");
@@ -120,18 +121,18 @@ public class JsonResourceAuthenticationHandler extends AbstractUsernamePasswordA
             final String originalPassword
     ) throws GeneralSecurityException, PreventedException {
 
-        val map = readAccountsFromResource();
-        val username = credential.getUsername();
+        final Map<String, OsfCasUserAccount> map = readAccountsFromResource();
+        final String username = credential.getUsername();
         if (!map.containsKey(username)) {
             throw new AccountNotFoundException();
         }
 
-        val password = credential.getPassword();
-        val verificationKey = ((OsfCredential) credential).getVerificationKey();
-        val account = map.get(username);
-        val accountVerificationKey = account.getAttributes().get("verificationKey");
-        val isVerificationKeyMatch = accountVerificationKey.contains(verificationKey);
-        val isPasswordMatch = password != null && matches(password, account.getPassword());
+        final String verificationKey = ((OsfCredential) credential).getVerificationKey();
+        final String password = credential.getPassword();
+        final OsfCasUserAccount account = map.get(username);
+        final boolean isVerificationKeyMatch = verificationKey != null
+                && verificationKey.equals(account.getVerificationKey());
+        final boolean isPasswordMatch = password != null && matches(password, account.getPassword());
         LOGGER.debug(
                 "[isPasswordMatch, isVerificationKeyMatch] = [{}, {}]",
                 isPasswordMatch,
@@ -152,25 +153,25 @@ public class JsonResourceAuthenticationHandler extends AbstractUsernamePasswordA
                     LOGGER.debug("Account status is OK");
             }
 
-            val warnings = new ArrayList<MessageDescriptor>();
+            final List<MessageDescriptor> warnings = new ArrayList<>();
             if (account.getExpirationDate() != null) {
-                val now = LocalDate.now(ZoneOffset.UTC);
+                final LocalDate now = LocalDate.now(ZoneOffset.UTC);
                 if (now.isEqual(account.getExpirationDate()) || now.isAfter(account.getExpirationDate())) {
                     throw new AccountExpiredException();
                 }
                 if (getPasswordPolicyConfiguration() != null) {
-                    val warningPeriod = account.getExpirationDate()
-                            .minusDays(getPasswordPolicyConfiguration().getPasswordWarningNumberOfDays());
+                    final LocalDate warningPeriod = account.getExpirationDate().minusDays(
+                            getPasswordPolicyConfiguration().getPasswordWarningNumberOfDays()
+                    );
                     if (now.isAfter(warningPeriod) || now.isEqual(warningPeriod)) {
-                        val daysRemaining = ChronoUnit.DAYS.between(now, account.getExpirationDate());
-                        warnings.add(new DefaultMessageDescriptor(
-                                "password.expiration.loginsRemaining",
-                                "You have {0} logins remaining before you MUST change your password.",
-                                new Serializable[]{daysRemaining}));
+                        final long daysRemaining = ChronoUnit.DAYS.between(now, account.getExpirationDate());
+                        final String code = "password.expiration.loginsRemaining";
+                        final String message = "You have {0} logins remaining before you MUST change your password.";
+                        warnings.add(new DefaultMessageDescriptor(code, message, new Serializable[]{daysRemaining}));
                     }
                 }
             }
-            val principal = this.principalFactory.createPrincipal(username, account.getAttributes());
+            Principal principal = this.principalFactory.createPrincipal(username, account.getAttributes());
             return createHandlerResult(credential, principal, warnings);
         }
 
@@ -182,7 +183,7 @@ public class JsonResourceAuthenticationHandler extends AbstractUsernamePasswordA
 
         LOGGER.debug("supports() ... ");
 
-        val isOsfCredentialAssignableFrom = OsfCredential.class.isAssignableFrom(clazz);
+        final boolean isOsfCredentialAssignableFrom = OsfCredential.class.isAssignableFrom(clazz);
         LOGGER.debug(
                 "Is [{}] assignable from [{}]? -> [{}]",
                 OsfCredential.class.getSimpleName(),
@@ -195,7 +196,7 @@ public class JsonResourceAuthenticationHandler extends AbstractUsernamePasswordA
     @Override
     public boolean supports(final Credential credential) {
 
-        val isInstanceOfOsfCredential = credential instanceof OsfCredential;
+        final boolean isInstanceOfOsfCredential = credential instanceof OsfCredential;
         LOGGER.debug(
                 "Is [{}] an instance of [{}]? -> [{}]",
                 credential.getClass().getSimpleName(),
@@ -216,21 +217,22 @@ public class JsonResourceAuthenticationHandler extends AbstractUsernamePasswordA
             return true;
         }
         LOGGER.debug("Examining credential [{}] eligibility for authentication handler [{}]", credential, getName());
-        val result = this.credentialSelectionPredicate.test(credential);
+        final boolean testResult = this.credentialSelectionPredicate.test(credential);
         LOGGER.debug(
                 "Credential [{}] eligibility is [{}] for authentication handler [{}]",
                 credential,
                 getName(),
-                BooleanUtils.toStringTrueFalse(result)
+                BooleanUtils.toStringTrueFalse(testResult)
         );
-        return result;
+        return testResult;
     }
 
-    private Map<String, CasUserAccount> readAccountsFromResource() throws PreventedException {
+    /**
+     * Load all OSF users from a white-list JSON file which pre-defines the users and respective attributes.
+     */
+    private Map<String, OsfCasUserAccount> readAccountsFromResource() throws PreventedException {
         try {
-            return mapper.readValue(resource.getInputStream(),
-                    new TypeReference<>() {
-                    });
+            return mapper.readValue(resource.getInputStream(), new TypeReference<>() {});
         } catch (final Exception e) {
             LOGGER.error(e.getMessage(), e);
             throw new PreventedException(e);
