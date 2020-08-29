@@ -1,10 +1,13 @@
 package org.apereo.cas.adaptors.osf.authentication.handler.support;
 
 import org.apereo.cas.adaptors.osf.authentication.credential.OsfPostgresCredential;
-import org.apereo.cas.adaptors.osf.authentication.support.AuthenticationUtils;
 import org.apereo.cas.adaptors.osf.authentication.support.OsfUserStatus;
+import org.apereo.cas.adaptors.osf.authentication.support.OsfUserUtils;
+import org.apereo.cas.adaptors.osf.authentication.support.OsfPasswordUtils;
+import org.apereo.cas.adaptors.osf.authentication.support.TotpUtils;
 import org.apereo.cas.adaptors.osf.daos.JpaOsfDao;
 import org.apereo.cas.adaptors.osf.models.OsfGuid;
+import org.apereo.cas.adaptors.osf.models.OsfTotp;
 import org.apereo.cas.adaptors.osf.models.OsfUser;
 import org.apereo.cas.authentication.AuthenticationHandlerExecutionResult;
 import org.apereo.cas.authentication.Credential;
@@ -69,6 +72,7 @@ public class OsfPostgresAuthenticationHandler extends AbstractPreAndPostProcessi
         OsfPostgresCredential osfPostgresCredential = (OsfPostgresCredential) credential;
         transformUsername(osfPostgresCredential);
         transformPasswordOrVerificationKey(osfPostgresCredential);
+        transformOneTimePassword(osfPostgresCredential);
         LOGGER.debug("Attempting authentication internally for transformed credential [{}]",osfPostgresCredential);
         return authenticateOsfPostgresInternal(osfPostgresCredential);
     }
@@ -90,6 +94,7 @@ public class OsfPostgresAuthenticationHandler extends AbstractPreAndPostProcessi
         final String username = credential.getUsername();
         final String plainTextPassword = credential.getPassword();
         final String verificationKey = credential.getVerificationKey();
+        final String oneTimePassword = credential.getOneTimePassword();
 
         final OsfUser osfUser = jpaOsfDao.findOneUserByEmail(username);
         if (osfUser == null) {
@@ -99,10 +104,10 @@ public class OsfPostgresAuthenticationHandler extends AbstractPreAndPostProcessi
         if (osfGuid == null) {
             throw new FailedLoginException("User with username [" + username + "] does not have a valid OSF GUID");
         }
-        final String userStatus = AuthenticationUtils.verifyUserStatus(osfUser);
+        final String userStatus = OsfUserUtils.verifyUserStatus(osfUser);
 
         if (plainTextPassword != null) {
-            if (!AuthenticationUtils.verifyPassword(plainTextPassword, osfUser.getPassword())) {
+            if (!OsfPasswordUtils.verifyPassword(plainTextPassword, osfUser.getPassword())) {
                 throw new FailedLoginException("Invalid password for user with username [" + username + "]");
             }
         } else if (verificationKey != null) {
@@ -111,6 +116,21 @@ public class OsfPostgresAuthenticationHandler extends AbstractPreAndPostProcessi
             }
         } else {
             throw new FailedLoginException("Missing credential for user with username [" + username + "]");
+        }
+
+        final OsfTotp osfTotp = jpaOsfDao.findOneTotpByOwnerId(osfUser.getId());
+        if (osfTotp != null && osfTotp.isActive()) {
+            if (oneTimePassword == null) {
+                throw new FailedLoginException("2FA TOTP required for user [" + username + "]");
+            }
+            try {
+                final long transformedOneTimePassword = Long.parseLong(oneTimePassword);
+                if (!TotpUtils.checkCode(osfTotp.getTotpSecretBase32(), transformedOneTimePassword)) {
+                    throw new FailedLoginException("Invalid 2FA TOTP for user [" + username + "] (Type 1)");
+                }
+            } catch (final Exception e) {
+                throw new FailedLoginException("Invalid 2FA TOTP for user [" + username + "] (Type 2)");
+            }
         }
 
         if (OsfUserStatus.USER_NOT_CONFIRMED_OSF.equals(userStatus)) {
@@ -185,6 +205,18 @@ public class OsfPostgresAuthenticationHandler extends AbstractPreAndPostProcessi
         } else {
             transformPassword(credential);
             credential.setVerificationKey(null);
+        }
+    }
+
+    private void transformOneTimePassword(final OsfPostgresCredential credential) {
+        if (!StringUtils.isBlank(credential.getOneTimePassword())) {
+            LOGGER.debug(
+                    "Transforming credential one-time password via [{}]",
+                    this.principalNameTransformer.getClass().getName()
+            );
+            credential.setOneTimePassword(this.principalNameTransformer.transform(credential.getOneTimePassword()));
+        } else {
+            LOGGER.debug("Original one-time password is null");
         }
     }
 }
