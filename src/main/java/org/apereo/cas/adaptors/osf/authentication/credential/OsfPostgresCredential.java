@@ -11,25 +11,25 @@ import lombok.ToString;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * OSF Credential.
- *
- * Extends {@link RememberMeUsernamePasswordCredential} to enable non-interactive login with username and verification
- * key via {@link org.apereo.cas.adaptors.osf.web.flow.login.OsfPrincipalFromNonInteractiveCredentialsAction}.
+ * This is {@link OsfPostgresCredential}.
  *
  * @author Longze Chen
  * @since 6.2.1
  */
-@Slf4j
+@AllArgsConstructor
+@NoArgsConstructor
 @Getter
 @Setter
-@NoArgsConstructor
-@AllArgsConstructor
 @EqualsAndHashCode(callSuper = true)
 @ToString(callSuper = true)
-public class OsfCredential extends RememberMeUsernamePasswordCredential {
+@Slf4j
+public class OsfPostgresCredential extends RememberMeUsernamePasswordCredential {
 
-    private static final long serialVersionUID = 6991516093569886653L;
+    private static final long serialVersionUID = 4705325561237083442L;
 
+    /**
+     * The one-time and ephemeral OSF verification key.
+     */
     private String verificationKey;
 
     @Override
