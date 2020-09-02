@@ -3,11 +3,13 @@ package org.apereo.cas.adaptors.osf.authentication.handler.support;
 import org.apereo.cas.adaptors.osf.authentication.credential.OsfPostgresCredential;
 import org.apereo.cas.adaptors.osf.authentication.exceptions.AccountNotConfirmedIdpException;
 import org.apereo.cas.adaptors.osf.authentication.exceptions.AccountNotConfirmedOsfException;
+import org.apereo.cas.adaptors.osf.authentication.exceptions.InstitutionSsoNotImplementedException;
 import org.apereo.cas.adaptors.osf.authentication.exceptions.InvalidOneTimePasswordException;
 import org.apereo.cas.adaptors.osf.authentication.exceptions.InvalidPasswordException;
 import org.apereo.cas.adaptors.osf.authentication.exceptions.InvalidUserStatusException;
 import org.apereo.cas.adaptors.osf.authentication.exceptions.OneTimePasswordRequiredException;
 import org.apereo.cas.adaptors.osf.authentication.exceptions.InvalidVerificationKeyException;
+import org.apereo.cas.adaptors.osf.authentication.support.DelegationProtocol;
 import org.apereo.cas.adaptors.osf.authentication.support.OsfUserStatus;
 import org.apereo.cas.adaptors.osf.authentication.support.OsfUserUtils;
 import org.apereo.cas.adaptors.osf.authentication.support.OsfPasswordUtils;
@@ -77,8 +79,13 @@ public class OsfPostgresAuthenticationHandler extends AbstractPreAndPostProcessi
     ) throws GeneralSecurityException {
         OsfPostgresCredential osfPostgresCredential = (OsfPostgresCredential) credential;
         transformUsername(osfPostgresCredential);
-        transformPasswordOrVerificationKey(osfPostgresCredential);
-        transformOneTimePassword(osfPostgresCredential);
+        if (osfPostgresCredential.isRemotePrincipal()) {
+            osfPostgresCredential.setPassword(null);
+            osfPostgresCredential.setVerificationKey(null);
+        } else {
+            transformPasswordOrVerificationKey(osfPostgresCredential);
+            transformOneTimePassword(osfPostgresCredential);
+        }
         LOGGER.debug("Attempting authentication internally for transformed credential [{}]",osfPostgresCredential);
         return authenticateOsfPostgresInternal(osfPostgresCredential);
     }
@@ -98,10 +105,32 @@ public class OsfPostgresAuthenticationHandler extends AbstractPreAndPostProcessi
     ) throws GeneralSecurityException {
 
         final String username = credential.getUsername();
-        final boolean isRememberMe = credential.isRememberMe();
         final String plainTextPassword = credential.getPassword();
         final String verificationKey = credential.getVerificationKey();
         final String oneTimePassword = credential.getOneTimePassword();
+        final String institutionId = credential.getInstitutionId();
+        final boolean isRememberMe = credential.isRememberMe();
+        final boolean isRemotePrincipal = credential.isRemotePrincipal();
+        final DelegationProtocol delegationProtocol = credential.getDelegationProtocol();
+
+        LOGGER.debug(
+                "Credential metadata: username=[{}], password=[{}], verificationKey=[{}], oneTimePassword=[{}], " +
+                        "rememberMe=[{}], remotePrincipal=[{}], institutionId=[{}], delegationProtocol=[{}]",
+                username,
+                StringUtils.isNoneBlank(plainTextPassword),
+                StringUtils.isNoneBlank(verificationKey),
+                StringUtils.isNoneBlank(oneTimePassword),
+                isRememberMe,
+                isRemotePrincipal,
+                institutionId,
+                delegationProtocol
+        );
+
+        if (isRemotePrincipal) {
+            throw new InstitutionSsoNotImplementedException(
+                    "Institution SSO not implemented for user [" + username + "] @ [" + institutionId +"]"
+            );
+        }
 
         final OsfUser osfUser = jpaOsfDao.findOneUserByEmail(username);
         if (osfUser == null) {
